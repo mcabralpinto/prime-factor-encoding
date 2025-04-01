@@ -1,4 +1,4 @@
-# Prime Factor Codification
+# Prime Factor Encoding
 
 A converter and translator for the Prime Factor Codification / Writing System (or PFWS), a code I came up with for fun.
 
