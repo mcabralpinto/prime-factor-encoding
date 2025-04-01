@@ -1,6 +1,6 @@
 # Prime Factor Encoding
 
-A converter and translator for the Prime Factor Codification / Writing System (or PFWS), a code I came up with for fun.
+A converter and translator for the Prime Factor Encoding / Writing System (or PFWS), a code I came up with for fun.
 
 ## pfws.py
 
