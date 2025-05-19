@@ -236,7 +236,7 @@ class PFE_Translator:
         while True:
             os.system("cls")
             print(
-                "1. unicode -> pfe\n2. unicode -> pure pfe\n"
+                "1. unicode -> pfe\n2. pfe -> unicode\n"
                 "3. see dictionary\n4. leave\n"
             )
             opt: str = input("> choose (1 - 4): ")
