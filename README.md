@@ -38,7 +38,7 @@ Converting 342 into PFE:
 
 ### Encoding Characters
 
-The program initially populates a dictionary with the code for every Unicode character by:
+The program initially populates a dictionary , with the code for every Unicode character, in order to do this encoding process one time only. It does by:
 1. Converting its unicode value into PFE.
 2. If the resulting string has less than seven digits, pad it with preceding 0s until it reaches that amount (this is done because the max number of digits an encoded PFE number in the range of 0 to 255 can have is seven, so by padding every character becomes seven digits long, making it uniquely identifiable).
 
@@ -51,7 +51,7 @@ Converting "a" into PFE:
 "a" in PFE is 0'0'0'0'1'(1'3).
 ```
 
-> **Note**: Inputted numbers are treated as characters. 
+> **Note**: Inputted numbers are interpreted as Unicode characters. 
 
 ### Encoding Expressions
 
