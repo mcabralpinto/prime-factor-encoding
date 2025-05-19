@@ -187,7 +187,7 @@ class PFE_Translator:
 
     def convert(self) -> None:
         os.system("cls")
-        prompt: str = input("(unicode -> pfe)\n\nprompt: ").lower()
+        prompt: str = input("(unicode -> pfe)\n\nprompt: ")
 
         pfe: str = self.pfe(prompt)
         print(f"\nraw pfe:        {pfe}")
@@ -198,7 +198,7 @@ class PFE_Translator:
 
     def translate(self) -> None:
         os.system("cls")
-        prompt: str = input("(pfe -> unicode)\n\nprompt: ").lower()
+        prompt: str = input("(pfe -> unicode)\n\nprompt: ")
 
         pfe: str = self.unsimplify_pfe(prompt)
         print(f"\nraw pfe: {pfe}")
@@ -209,7 +209,7 @@ class PFE_Translator:
 
     # def convert_pure(self) -> None:
     #     os.system("cls")
-    #     prompt: str = input("(unicode -> pure pfe)\n\nprompt: ").lower()
+    #     prompt: str = input("(unicode -> pure pfe)\n\nprompt: ")
 
     #     count: int = 1
     #     simplified = self.simplify_pfe(self.pfe(prompt))
