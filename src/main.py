@@ -203,7 +203,7 @@ class PFE_Translator:
         pfe: str = self.unsimplify_pfe(prompt)
         print(f"\nraw pfe: {pfe}")
         text: str = self.normal_text(pfe)
-        print(f"\nunicode:  {text}")
+        print(f"\nunicode: {text}")
 
         input("\n\npress enter...")
 
