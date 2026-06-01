@@ -41,7 +41,7 @@ Converting 342 into PFE:
 
 Each Unicode character (values 0–255) is assigned a fixed PFE code:
 1. Compute the PFE of its Unicode value.
-2. If the resulting code could be mistaken for the prefix of another character's code, prepend a `0` to disambiguate.
+2. If the resulting code could be mistaken for the prefix of another character's code, add a preceding `0` to disambiguate.
 3. Convert to *space form*: replace every `(` and `)` with a space. To allow unambiguous decoding, a digit equal to `(run_length − 1)` is inserted immediately after the earliest occurrence of the longest consecutive run of `)`.
 
 ```

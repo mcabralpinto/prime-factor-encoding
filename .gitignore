@@ -1,2 +1,6 @@
 env
-src\out.txt
+data
+.claude
+src/legacy
+__pycache__
+other/

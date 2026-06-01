@@ -1,231 +1,306 @@
-from math import sqrt
-from typing import List, Dict
-from primePy import primes
+import argparse
 from dataclasses import dataclass
 import os
+from typing import Dict, List
+
+from primePy import primes
 
 
 @dataclass
 class PFE_Translator:
+    """maps unicode chars to prime-factor encoding and back."""
+
     char_num = 256
-    max_digits = 7
     chars: Dict[str, str] = None
     inv_chars: Dict[str, str] = None
+    debug: bool = False
 
     def __post_init__(self):
-        self.chars = {chr(i): self.pfn(i, True) for i in range(self.char_num)}
+        # prime cache must come first: pfn/unsimplify_pfn/normal_num all use it
+        self._prime_cache: List[int] = list(primes.first(256))
+
+        raw = {chr(i): self.pfn(i) for i in range(self.char_num)}
+
+        # self-delimiting check on raw pfns before any adjustment.
+        # encodings that start with '(' (only "()" currently) are treated as
+        # self-delimiting because no other valid pfn shares that prefix.
+        initial_no_term = frozenset(
+            enc for enc in raw.values()
+            if enc.startswith("(") or self.unsimplify_pfn(enc + "0") > 255
+        )
+
+        # non-self-delimiting chars get a preceding zero when either:
+        #   rule 1 — pfn has 1-3 digits (can be extended to another valid char)
+        #   rule 2 — terminator digit > '3' (only checked when rule 1 doesn't apply,
+        #             so each char gets at most one preceding zero)
+        # both rules are evaluated on the raw pfn form before space conversion.
+        pfn_adjusted: Dict[str, str] = {}
+        for i in range(self.char_num):
+            enc = raw[chr(i)]
+            if enc not in initial_no_term:
+                digit_count = sum(1 for c in enc if c.isdigit())
+                rule1 = 1 <= digit_count <= 3
+                rule2 = not rule1 and int(self._terminator(enc)) > 3
+                if rule1 or rule2:
+                    enc = "0" + enc
+            pfn_adjusted[chr(i)] = enc
+
+        # convert every pfn encoding to its parenthesis-free space form.
+        # closing-paren runs are disambiguated by inserting (streak_len - 1)
+        # immediately after the earliest longest run (see _pfn_to_space).
+        self.chars = {ch: self._pfn_to_space(enc) for ch, enc in pfn_adjusted.items()}
+
         self.inv_chars = {v: k for k, v in self.chars.items()}
+        all_encs = set(self.chars.values())
+        self.no_term = frozenset(
+            enc for enc in all_encs
+            if not any(other != enc and other.startswith(enc) for other in all_encs)
+        )
 
-    def pfn(self, num: int, char: bool = False) -> str:
-        if num == 1:
-            return "0" if not char else "0'0'0'0'0'0"
-        if num == 0:
-            return "()" if not char else "0'0'0'0'0'()"
+        # terminator for space-form encodings: smallest digit d >= 1 such that
+        # no space encoding starts with enc + d (prefix-free termination).
+        self._term_map: Dict[str, str] = {
+            enc: self._terminator_space(enc, all_encs)
+            for enc in all_encs
+            if enc not in self.no_term
+        }
+        self._terminated_encs: frozenset = frozenset(
+            enc + t for enc, t in self._term_map.items()
+        )
 
+    @staticmethod
+    def _closing_streaks(enc: str) -> List[tuple]:
+        # return (start_pos, length) for every run of consecutive closing parens
+        streaks, i = [], 0
+        while i < len(enc):
+            if enc[i] == ")":
+                start = i
+                while i < len(enc) and enc[i] == ")":
+                    i += 1
+                streaks.append((start, i - start))
+            else:
+                i += 1
+        return streaks
+
+    @staticmethod
+    def _pfn_to_space(enc: str) -> str:
+        # replace ( and ) with spaces; disambiguate by inserting (streak_len - 1)
+        # right after the earliest occurrence of the longest closing-paren run.
+        streaks = PFE_Translator._closing_streaks(enc)
+        if not streaks:
+            return enc  # no parens at all — string is already space-form
+
+        max_len  = max(s[1] for s in streaks)
+        earliest = min((s for s in streaks if s[1] == max_len), key=lambda s: s[0])
+        pos, streak_len = earliest
+
+        before = enc[:pos + streak_len].replace("(", " ").replace(")", " ")
+        after  = enc[pos + streak_len:].replace("(", " ").replace(")", " ")
+
+        # collapse consecutive spaces (may arise when parens are adjacent)
+        def collapse(s: str) -> str:
+            out, prev_sp = [], False
+            for c in s:
+                if c == " ":
+                    if not prev_sp:
+                        out.append(" ")
+                    prev_sp = True
+                else:
+                    out.append(c)
+                    prev_sp = False
+            return "".join(out)
+
+        return collapse(before + str(streak_len - 1) + after)
+
+    @staticmethod
+    def _strip_leading_zeros(encoded: str) -> str:
+        # drop unused leading 0 tokens from the factor-count stream
+        return encoded.lstrip("0") or "0"
+
+    @staticmethod
+    def _factor_counts_desc(num: int) -> str:
+        # compute prime exponents in descending-prime order as single chars
         prime_list: List[int] = primes.upto(num)
         prime_list.reverse()
         factors: List[int] = primes.factors(num)
-        final: str = ""
+        result: List[str] = []
 
         for p in prime_list:
             count = 0
             while p in factors:
                 count += 1
                 factors.remove(p)
-            final += f"{count}'"
-        final = final[:-1]
-        curr: str = final[0]
+            result.append(str(count))
 
-        while curr == "0" or curr == "'":
-            final = final[1:]
-            curr = final[0]
+        return "".join(result)
 
-        simplified = self.simplify_pfn(final)
+    def pfn(self, num: int) -> str:
+        if num == 1:
+            return "0"
+        if num == 0:
+            return "()"
 
-        if char:
-            count = sum(1 for c in simplified if c in "0123456789")
-            if count < self.max_digits:
-                simplified = "0'" * (self.max_digits - count) + simplified
-        return simplified
+        final = self._strip_leading_zeros(self._factor_counts_desc(num))
+        return self.simplify_pfn(final)
+
+    def _flush_pfn_temp(self, temp: str) -> str:
+        # collapse long zero-runs into recursive parenthesized chunks
+        amount = len(temp)
+        if amount > 1:
+            new = self.simplify_pfn(self.pfn(amount))
+            return f"({new})"
+        return temp
 
     def simplify_pfn(self, unsimplified: str) -> str:
+        # compress repeated zero patterns while keeping structure intact
         temp: str = ""
         final: str = ""
 
         for curr in unsimplified:
-            if curr == "'" or curr == "0":
+            if curr == "0":
                 temp += curr
             else:
-                amount = len(temp) // 2
-                if amount > 1:
-                    new = self.simplify_pfn(self.pfn(amount))
-                    final += f"'({new})'"
-                else:
-                    final += temp
+                final += self._flush_pfn_temp(temp)
                 temp = ""
-                # if (not curr.isalpha() and not curr.isnumeric()) and final[-1] == "'": final = final[:-1]
                 final += curr
 
-        if len(temp) > 0:
-            amount = (len(temp)) // 2
-            if amount > 1:
-                new = self.simplify_pfn(self.pfn(amount))
-                final += f"'({new})"
-            else:
-                final += temp
+        if temp:
+            final += self._flush_pfn_temp(temp)
 
         return final
 
     def unsimplify_pfn(self, simplified: str) -> int:
+        # expand paren groups and compute the integer value of a PFE string
         final: str = ""
-        layer: int = 0
         i: int = 0
-        while i != len(simplified):
+        while i < len(simplified):
             if simplified[i] == "(":
-                layer += 1
-                start: int = i
+                layer = 1
+                start = i
                 while layer != 0:
                     i += 1
                     if simplified[i] == "(":
                         layer += 1
                     elif simplified[i] == ")":
                         layer -= 1
-                count: int = self.unsimplify_pfn(simplified[start + 1 : i])
-                final += "0"
-                for _ in range(count - 1):
-                    final += "'0"
+                count = self.unsimplify_pfn(simplified[start + 1:i])
+                final += "0" * count
             else:
                 final += simplified[i]
             i += 1
         return self.normal_num(final)
 
     def normal_num(self, pfn: str) -> int:
-        prime_list: List[int] = primes.first((len(pfn) // 2) + 1)
-        prime_list.reverse()
+        # rebuild numeric value from exponent stream and prime bases
+        if not pfn:
+            return 1
+        length = len(pfn)
+        # extend prime cache if the exponent stream is longer than expected
+        while len(self._prime_cache) < length:
+            self._prime_cache = list(primes.first(len(self._prime_cache) * 2))
         num: int = 1
-        for i in range(len(prime_list)):
-            num *= pow(prime_list[i], int(pfn[i * 2]))
+        for i in range(length):
+            exp = int(pfn[i])
+            if exp:
+                num *= pow(self._prime_cache[length - 1 - i], exp)
         return num
 
+    def _nth_prime(self, n: int) -> int:
+        # return the (n+1)-th prime (0-indexed); extend the cache if needed
+        while len(self._prime_cache) <= n:
+            self._prime_cache = list(primes.first(len(self._prime_cache) * 2))
+        return self._prime_cache[n]
+
+    def _terminator(self, encoded: str) -> str:
+        # first digit d >= 1 such that appending it pushes the decoded value above 255
+        # used only on raw pfn encodings during __post_init__ (rule 2 check).
+        for d in range(1, 10):
+            if self.unsimplify_pfn(encoded + str(d)) > 255:
+                return str(d)
+        raise ValueError(f"no terminator found for {encoded!r}")
+
+    def _terminator_space(self, space_enc: str, all_encs: set) -> str:
+        # first digit d >= 1 such that no space encoding starts with space_enc + d.
+        # this guarantees the terminated token is unambiguous in the output stream.
+        for d in range(1, 10):
+            candidate = space_enc + str(d)
+            if not any(enc.startswith(candidate) for enc in all_encs):
+                return str(d)
+        raise ValueError(f"no space-form terminator found for {space_enc!r}")
+
     def pfe(self, text: str) -> str:
-        return "'".join([self.chars[char] for char in text])
-
-    def simplify_pfe(self, unsimplified: str) -> str:
-        temp: str = ""
-        final: str = ""
-        prev: str = " "
-        for curr in unsimplified:
-            if (curr == "'" and prev == "0") or curr == "0":
-                temp += curr
-            else:
-                amount = len(temp) // 2
-                if amount > 1:
-                    new = self.pfn(amount)
-                    final += f"[{new}]'"
-                else:
-                    final += temp
-                temp = ""
-                final += curr
-            prev = curr
-
-        if len(temp) > 0:
-            amount = (len(temp) + 1) // 2
-            if amount > 1:
-                new = self.pfn(amount)
-                final += f"[{new}]"
-            else:
-                final += temp
-
-        return final
-
-    def unsimplify_pfe(self, simplified: str) -> str:
-        final: str = ""
-        strlen: int = len(simplified) + 1
-        simplified = f" {simplified} "
-        layer: int = 0
-        i: int = 1
-        while i != strlen:
-            if simplified[i] == "[" and simplified[i + 1].isnumeric():
-                layer += 1
-                start: int = i
-                while layer != 0:
-                    i += 1
-                    if simplified[i] == "[":
-                        layer += 1
-                    elif simplified[i] == "]":
-                        layer -= 1
-                count: int = self.unsimplify_pfn(simplified[start + 1 : i])
-                final += "0"
-                for _ in range(count - 1):
-                    final += "'0"
-            else:
-                final += simplified[i]
-            i += 1
-
-        return final
+        # CBC transform then encode each char; terminator omitted if already self-delimiting.
+        # trailing space is stripped from the final token: it is unambiguous within a
+        # sequence (the next token always begins with a digit) but redundant at the end.
+        result = []
+        prev = 0
+        for n, char in enumerate(text):
+            val = (ord(char) + prev + self._nth_prime(n)) % 256
+            prev = val
+            encoded = self.chars[chr(val)]
+            if encoded not in self.no_term:
+                encoded += self._term_map[encoded]
+            if self.debug:
+                print(f"  {char!r:4s} -> {encoded}")
+            result.append(encoded)
+        if result and result[-1].endswith(" "):
+            result[-1] = result[-1][:-1]
+        return "".join(result)
 
     def normal_text(self, pfe: str) -> str:
-        num_count: int = 0
-        idx: int = 0
+        # encodings are now parenthesis-free (digits and spaces only), so token
+        # boundaries are found purely by prefix-matching against no_term /
+        # _terminated_encs — no depth tracking needed.
         final: str = ""
-
-        for i in range(len(pfe)):
-            curr = pfe[i]
-            if num_count < self.max_digits:
-                num_count += 1 if curr in "0123456789" else 0
-            else:
-                if curr == "'":
-                    final += self.inv_chars[pfe[idx:i]]
-                    # print(f"{pfe[idx:i]} -> {self.inv_chars[pfe[idx:i]]}")
-                    idx = i + 1
-                    num_count = 0
-            if i == len(pfe) - 1:
-                print(f"{pfe[idx:]} -> {self.inv_chars[pfe[idx:]]}")
-                final += self.inv_chars[pfe[idx:]]
-
+        i: int = 0
+        prev, n = 0, 0
+        while i < len(pfe):
+            start = i
+            terminated = False
+            while i < len(pfe):
+                i += 1
+                accum = pfe[start:i]
+                if accum in self._terminated_encs:
+                    terminated = True
+                    break
+                if accum in self.no_term:
+                    break
+            natural_pfe = pfe[start:i - 1] if terminated else pfe[start:i]
+            # if end of input was reached and the token is not found, try
+            # appending a space — handles trailing-space encodings whose final
+            # space was stripped by pfe() or omitted by the user.
+            if natural_pfe not in self.inv_chars and natural_pfe + " " in self.inv_chars:
+                natural_pfe += " "
+            val = ord(self.inv_chars[natural_pfe])
+            decoded = chr((val - prev - self._nth_prime(n)) % 256)
+            if self.debug:
+                print(f"  {natural_pfe:20s} -> {decoded!r}")
+            final += decoded
+            prev, n = val, n + 1
         return final
 
     def convert(self) -> None:
+        # interactive unicode -> pfe flow
         os.system("cls")
         prompt: str = input("(unicode -> pfe)\n\nprompt: ")
 
         pfe: str = self.pfe(prompt)
-        print(f"\nraw pfe:        {pfe}")
-        simplified = self.simplify_pfe(pfe)
-        print(f"\nsimplified pfe: {simplified}")
+        print(f"\npfe: {pfe}")
 
         input("\n\npress enter...")
 
     def translate(self) -> None:
+        # interactive pfe -> unicode flow
         os.system("cls")
         prompt: str = input("(pfe -> unicode)\n\nprompt: ")
 
-        pfe: str = self.unsimplify_pfe(prompt)
-        print(f"\nraw pfe: {pfe}")
-        text: str = self.normal_text(pfe)
+        text: str = self.normal_text(prompt)
         print(f"\nunicode: {text}")
 
         input("\n\npress enter...")
 
-    # def convert_pure(self) -> None:
-    #     os.system("cls")
-    #     prompt: str = input("(unicode -> pure pfe)\n\nprompt: ")
-
-    #     count: int = 1
-    #     simplified = self.simplify_pfe(self.pfe(prompt))
-    #     while any(c in "1234567890" for c in simplified):
-    #         simplified = self.simplify_pfe(self.pfe(simplified))
-    #         count += 1
-    #         print(f"iteration {count}: {simplified[0:10]} ... {simplified[-10:]}")
-
-    #     with open("output.txt", "w") as f:
-    #         f.write(simplified)
-    #     input(
-    #         f"successfully encoded the prompt {count} times and stored it in output.txt"
-    #         "\n\npress enter..."
-    #     )
-
     def show_dict(self) -> None:
+        # print full char <-> code dictionary
         os.system("cls")
         print("dictionary:\n")
         for k, v in self.chars.items():
@@ -233,6 +308,7 @@ class PFE_Translator:
         input("\n\npress enter...")
 
     def run(self) -> None:
+        # simple cli menu loop
         while True:
             os.system("cls")
             print(
@@ -254,11 +330,31 @@ class PFE_Translator:
 
 
 def main():
-    translator = PFE_Translator()
-    translator.run()
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--file", choices=["pfe", "uni"])
+    parser.add_argument("--debug", action="store_true",
+                        help="print per-character mappings after each encode/decode")
+    args = parser.parse_args()
+
+    translator = PFE_Translator(debug=args.debug)
+
+    if args.file:
+        os.makedirs("data", exist_ok=True)
+        with open(os.path.join("data", "input.txt"), "r", encoding="utf-8") as f:
+            content = f.read()
+
+        if args.file == "pfe":
+            result = translator.pfe(content)
+        else:
+            result = translator.normal_text(content)
+
+        with open(os.path.join("data", "output.txt"), "w", encoding="utf-8") as f:
+            f.write(result)
+
+        print("written to data/output.txt")
+    else:
+        translator.run()
 
 
 if __name__ == "__main__":
     main()
-
-# There is some useless code left from the previous version, I'll clean it up later
